@@ -12,7 +12,7 @@ class BlockedPlanError(Exception):
     """Raised when a plan is blocked due to prior failure."""
 
 
-def snapshot_env(max_files: int = 50) -> Dict[str, Any]:
+def snapshot_env(max_files: int = 50) -> dict[str, Any]:
     """Capture a lightweight env snapshot (cwd listing + env vars)."""
     cwd = os.getcwd()
     files = []
@@ -35,13 +35,13 @@ class Recorder:
     def __init__(self, task: str, plan: str, run_dir: Optional[str] = None, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8):
         self.task = task
         self.plan = plan
-        self.events: List[Dict[str, Any]] = []
+        self.events: list[dict[str, Any]] = []
         self.run_dir = run_dir or os.path.expanduser("~/.autopsy/runs")
         self.db_path = db_path
         self.min_similarity = min_similarity
         os.makedirs(self.run_dir, exist_ok=True)
 
-    def log_event(self, kind: str, detail: Dict[str, Any]):
+    def log_event(self, kind: str, detail: dict[str, Any]):
         self.events.append({"ts": time.time(), "kind": kind, "detail": detail})
 
     @contextmanager
