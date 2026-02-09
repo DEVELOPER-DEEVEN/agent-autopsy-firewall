@@ -1,23 +1,24 @@
 import hashlib
 import os
 import datetime
-from typing import Optional, List
 from difflib import SequenceMatcher
 
 from sqlmodel import Field, SQLModel, Session, create_engine, select
 from pydantic import BaseModel
 
 DEFAULT_DB_PATH = os.path.expanduser("~/.autopsy/autopsy.db")
+_ENGINE_CACHE = {}
 
 
 class Episode(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     signature: str
     task: str
+    plan: str  # Stored for forensic comparison
     outcome: str  # "success" | "failure"
     summary: str
     trace_path: str
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
 
 
 class EpisodeMatch(BaseModel):
@@ -30,8 +31,12 @@ def _ensure_dir(path: str):
 
 
 def get_engine(db_path: str = DEFAULT_DB_PATH):
+    if db_path in _ENGINE_CACHE:
+        return _ENGINE_CACHE[db_path]
     _ensure_dir(db_path)
-    return create_engine(f"sqlite:///{db_path}")
+    engine = create_engine(f"sqlite:///{db_path}")
+    _ENGINE_CACHE[db_path] = engine
+    return engine
 
 
 def init_db(db_path: str = DEFAULT_DB_PATH):
@@ -55,7 +60,7 @@ def plan_similarity(a: str, b: str) -> float:
 def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path: str, db_path: str = DEFAULT_DB_PATH) -> Episode:
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
-    ep = Episode(signature=signature, task=task, outcome=outcome, summary=summary, trace_path=trace_path)
+    ep = Episode(signature=signature, task=task, plan=plan, outcome=outcome, summary=summary, trace_path=trace_path)
     with Session(engine) as session:
         session.add(ep)
         session.commit()
@@ -63,7 +68,7 @@ def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path:
         return ep
 
 
-def find_failures_like(task: str, plan: str, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8) -> List[EpisodeMatch]:
+def find_failures_like(task: str, plan: str, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8) -> list[EpisodeMatch]:
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
     with Session(engine) as session:
@@ -71,17 +76,22 @@ def find_failures_like(task: str, plan: str, db_path: str = DEFAULT_DB_PATH, min
         statement = select(Episode).where(Episode.signature == signature, Episode.outcome == "failure")
         exact = session.exec(statement).all()
 
-        # Fuzzy match on task+plan
+        # Fuzzy match on plan
         statement_all = select(Episode).where(Episode.outcome == "failure")
         all_eps = session.exec(statement_all).all()
         fuzzy = []
         for ep in all_eps:
-            sim = plan_similarity(ep.plan if hasattr(ep, "plan") else ep.summary, plan)
+            # Skip if exact match (already handled)
+            if ep.signature == signature:
+                continue
+            
+            sim = plan_similarity(ep.plan, plan)
             if sim >= min_similarity:
                 fuzzy.append(EpisodeMatch(episode=ep, similarity=sim))
 
         matches = [EpisodeMatch(episode=r, similarity=1.0) for r in exact]
         matches.extend(fuzzy)
+        
         # Deduplicate by id keeping highest similarity
         best = {}
         for m in matches:
