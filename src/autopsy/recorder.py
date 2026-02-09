@@ -12,13 +12,33 @@ class BlockedPlanError(Exception):
     """Raised when a plan is blocked due to prior failure."""
 
 
+def snapshot_env(max_files: int = 50) -> Dict[str, Any]:
+    """Capture a lightweight env snapshot (cwd listing + env vars)."""
+    cwd = os.getcwd()
+    files = []
+    try:
+        for idx, name in enumerate(sorted(os.listdir(cwd))):
+            if idx >= max_files:
+                break
+            try:
+                stat = os.stat(name)
+                files.append({"name": name, "size": stat.st_size, "mtime": stat.st_mtime})
+            except OSError:
+                files.append({"name": name, "error": "stat_failed"})
+    except Exception:
+        files.append({"error": "listdir_failed"})
+    env_vars = {k: v for k, v in os.environ.items() if k.startswith("APP_") or k.startswith("ENV_")}
+    return {"cwd": cwd, "files": files, "env": env_vars}
+
+
 class Recorder:
-    def __init__(self, task: str, plan: str, run_dir: Optional[str] = None, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, task: str, plan: str, run_dir: Optional[str] = None, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8):
         self.task = task
         self.plan = plan
         self.events: List[Dict[str, Any]] = []
         self.run_dir = run_dir or os.path.expanduser("~/.autopsy/runs")
         self.db_path = db_path
+        self.min_similarity = min_similarity
         os.makedirs(self.run_dir, exist_ok=True)
 
     def log_event(self, kind: str, detail: Dict[str, Any]):
@@ -27,12 +47,13 @@ class Recorder:
     @contextmanager
     def session(self):
         # Block if similar failure exists
-        failures = find_failures_like(self.task, self.plan, db_path=self.db_path)
+        failures = find_failures_like(self.task, self.plan, db_path=self.db_path, min_similarity=self.min_similarity)
         if failures:
-            raise BlockedPlanError(f"Plan blocked; prior failure count={len(failures)}")
+            raise BlockedPlanError(f"Plan blocked; prior failures: {[(m.episode.id, round(m.similarity, 2)) for m in failures]}")
 
         trace_path = os.path.join(self.run_dir, f"trace-{int(time.time())}.json")
         start = time.time()
+        self.log_event("env_snapshot", snapshot_env())
         try:
             yield self
             duration = time.time() - start

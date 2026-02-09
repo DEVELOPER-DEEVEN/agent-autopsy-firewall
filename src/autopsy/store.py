@@ -2,6 +2,7 @@ import hashlib
 import os
 import datetime
 from typing import Optional, List
+from difflib import SequenceMatcher
 
 from sqlmodel import Field, SQLModel, Session, create_engine, select
 from pydantic import BaseModel
@@ -46,6 +47,11 @@ def hash_signature(task: str, plan: str) -> str:
     return h.hexdigest()
 
 
+def plan_similarity(a: str, b: str) -> float:
+    """Cheap heuristic similarity for plans (0-1)."""
+    return SequenceMatcher(None, a, b).ratio()
+
+
 def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path: str, db_path: str = DEFAULT_DB_PATH) -> Episode:
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
@@ -57,10 +63,28 @@ def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path:
         return ep
 
 
-def find_failures_like(task: str, plan: str, db_path: str = DEFAULT_DB_PATH) -> List[EpisodeMatch]:
+def find_failures_like(task: str, plan: str, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8) -> List[EpisodeMatch]:
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
     with Session(engine) as session:
+        # Exact signature match first
         statement = select(Episode).where(Episode.signature == signature, Episode.outcome == "failure")
-        results = session.exec(statement).all()
-        return [EpisodeMatch(episode=r, similarity=1.0) for r in results]
+        exact = session.exec(statement).all()
+
+        # Fuzzy match on task+plan
+        statement_all = select(Episode).where(Episode.outcome == "failure")
+        all_eps = session.exec(statement_all).all()
+        fuzzy = []
+        for ep in all_eps:
+            sim = plan_similarity(ep.plan if hasattr(ep, "plan") else ep.summary, plan)
+            if sim >= min_similarity:
+                fuzzy.append(EpisodeMatch(episode=ep, similarity=sim))
+
+        matches = [EpisodeMatch(episode=r, similarity=1.0) for r in exact]
+        matches.extend(fuzzy)
+        # Deduplicate by id keeping highest similarity
+        best = {}
+        for m in matches:
+            if m.episode.id not in best or m.similarity > best[m.episode.id].similarity:
+                best[m.episode.id] = m
+        return sorted(best.values(), key=lambda m: m.similarity, reverse=True)
