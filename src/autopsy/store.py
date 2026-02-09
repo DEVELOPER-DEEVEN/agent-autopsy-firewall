@@ -17,7 +17,7 @@ class Episode(SQLModel, table=True):
     outcome: str  # "success" | "failure"
     summary: str
     trace_path: str
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
 
 
 class EpisodeMatch(BaseModel):
