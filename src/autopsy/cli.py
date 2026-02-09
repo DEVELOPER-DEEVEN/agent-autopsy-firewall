@@ -4,6 +4,7 @@ import os
 from typing import Optional
 
 from .store import init_db, find_failures_like, DEFAULT_DB_PATH
+from .trace import load_trace, render_trace
 
 
 def cmd_list(args):
@@ -21,9 +22,11 @@ def cmd_show(args):
     if not os.path.exists(trace_path):
         print(f"Trace not found: {trace_path}")
         return
-    with open(trace_path) as f:
-        data = json.load(f)
-    print(json.dumps(data, indent=2))
+    data = load_trace(trace_path)
+    if args.pretty:
+        print(render_trace(data))
+    else:
+        print(json.dumps(data, indent=2))
 
 
 def cmd_check(args):
@@ -46,6 +49,7 @@ def build_parser():
 
     p_show = sub.add_parser("show", help="Show a trace JSON")
     p_show.add_argument("trace", help="Path to trace json")
+    p_show.add_argument("--pretty", action="store_true", help="Pretty-print the trace")
     p_show.set_defaults(func=cmd_show)
 
     p_check = sub.add_parser("check", help="Check for similar failures")
