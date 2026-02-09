@@ -11,6 +11,17 @@ DEFAULT_DB_PATH = os.path.expanduser("~/.autopsy/autopsy.db")
 
 
 class Episode(SQLModel, table=True):
+    """
+    Represents a recorded agent execution episode.
+
+    Attributes:
+        signature: Hash of task + plan for quick lookup.
+        task: The goal/prompt given to the agent.
+        outcome: "success" or "failure".
+        summary: Brief description of the result.
+        trace_path: Filesystem path to the full JSON trace.
+        created_at: Timestamp of record creation (UTC).
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     signature: str
     task: str
@@ -53,6 +64,20 @@ def plan_similarity(a: str, b: str) -> float:
 
 
 def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path: str, db_path: str = DEFAULT_DB_PATH) -> Episode:
+    """
+    Log an episode to the database.
+
+    Args:
+        task: The goal/prompt.
+        plan: The proposed plan (hashed into signature).
+        outcome: "success" or "failure".
+        summary: Result summary.
+        trace_path: Path to full trace file.
+        db_path: Path to SQLite DB.
+
+    Returns:
+        The created Episode object.
+    """
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
     ep = Episode(signature=signature, task=task, outcome=outcome, summary=summary, trace_path=trace_path)
