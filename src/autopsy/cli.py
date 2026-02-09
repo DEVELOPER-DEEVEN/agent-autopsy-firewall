@@ -3,14 +3,14 @@ import json
 import os
 from typing import Optional
 
-from .store import init_db, find_failures_like, DEFAULT_DB_PATH
+from sqlmodel import Session, select
+
+from .store import Episode, init_db, find_failures_like, DEFAULT_DB_PATH
 from .trace import load_trace, render_trace
 
 
 def cmd_list(args):
     engine = init_db(args.db)
-    from sqlmodel import Session, select
-    from .store import Episode
     with Session(engine) as session:
         eps = session.exec(select(Episode).order_by(Episode.created_at.desc())).all()
         for ep in eps:
@@ -36,7 +36,7 @@ def cmd_check(args):
     else:
         for m in matches:
             ep = m.episode
-            print(f"Match id={ep.id} similarity={m.similarity:.2f} outcome={ep.outcome} summary={ep.summary} trace={ep.trace_path}")
+            print(f"Match id={ep.id} similarity={m.similarity:.2f} outcome={ep.outcome} plan={ep.plan} summary={ep.summary} trace={ep.trace_path}")
 
 
 def build_parser():
