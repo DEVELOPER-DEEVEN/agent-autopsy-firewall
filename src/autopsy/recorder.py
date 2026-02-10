@@ -51,13 +51,22 @@ def get_file_contents(max_size: int = 1024 * 50) -> Dict[str, str]:
 
 
 class Recorder:
-    def __init__(self, task: str, plan: str, run_dir: Optional[str] = None, db_path: str = DEFAULT_DB_PATH, min_similarity: float = 0.8):
+    def __init__(
+        self, 
+        task: str, 
+        plan: str, 
+        run_dir: Optional[str] = None, 
+        db_path: str = DEFAULT_DB_PATH, 
+        min_similarity: float = 0.8,
+        similarity_method: str = "fuzzy"
+    ):
         self.task = task
         self.plan = plan
         self.events: list[dict[str, Any]] = []
         self.run_dir = run_dir or os.path.expanduser("~/.autopsy/runs")
         self.db_path = db_path
         self.min_similarity = min_similarity
+        self.similarity_method = similarity_method
         self.before_files: Dict[str, str] = {}
         os.makedirs(self.run_dir, exist_ok=True)
 
@@ -67,7 +76,13 @@ class Recorder:
     @contextmanager
     def session(self, capture_diffs: bool = True):
         # Block if similar failure exists
-        failures = find_failures_like(self.task, self.plan, db_path=self.db_path, min_similarity=self.min_similarity)
+        failures = find_failures_like(
+            self.task, 
+            self.plan, 
+            db_path=self.db_path, 
+            min_similarity=self.min_similarity,
+            method=self.similarity_method
+        )
         if failures:
             raise BlockedPlanError(f"Plan blocked; prior failures: {[(m.episode.id, round(m.similarity, 2)) for m in failures]}")
 
