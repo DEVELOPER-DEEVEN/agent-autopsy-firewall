@@ -19,6 +19,7 @@ class Episode(SQLModel, table=True):
     task: str
     plan: str
     outcome: str  # "success" | "failure"
+    failure_kind: Optional[str] = None # NEW: TIMEOUT, PERMISSION, LOGIC, etc.
     summary: str
     trace_path: str
     created_at: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
@@ -89,10 +90,26 @@ def plan_similarity(a: str, b: str, method: str = "fuzzy") -> float:
         return SequenceMatcher(None, a, b).ratio()
 
 
-def record_episode(task: str, plan: str, outcome: str, summary: str, trace_path: str, db_path: str = DEFAULT_DB_PATH) -> Episode:
+def record_episode(
+    task: str, 
+    plan: str, 
+    outcome: str, 
+    summary: str, 
+    trace_path: str, 
+    failure_kind: Optional[str] = None,
+    db_path: str = DEFAULT_DB_PATH
+) -> Episode:
     engine = init_db(db_path)
     signature = hash_signature(task, plan)
-    ep = Episode(signature=signature, task=task, plan=plan, outcome=outcome, summary=summary, trace_path=trace_path)
+    ep = Episode(
+        signature=signature, 
+        task=task, 
+        plan=plan, 
+        outcome=outcome, 
+        summary=summary, 
+        trace_path=trace_path,
+        failure_kind=failure_kind
+    )
     with Session(engine) as session:
         session.add(ep)
         session.commit()

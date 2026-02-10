@@ -3,18 +3,21 @@ import json
 import os
 from typing import Optional
 
-from sqlmodel import Session, select
-
-from .store import Episode, init_db, find_failures_like, DEFAULT_DB_PATH
+from .store import init_db, find_failures_like, DEFAULT_DB_PATH
 from .trace import load_trace, render_trace
 
 
 def cmd_list(args):
     engine = init_db(args.db)
+    from sqlmodel import Session, select
+    from .store import Episode
     with Session(engine) as session:
         eps = session.exec(select(Episode).order_by(Episode.created_at.desc())).all()
+        print(f"{'ID':<4} | {'KIND':<10} | {'OUTCOME':<8} | {'SUMMARY'}")
+        print("-" * 60)
         for ep in eps:
-            print(f"[{ep.id}] {ep.created_at} | {ep.outcome} | {ep.task} | {ep.summary}")
+            kind = ep.failure_kind or "N/A"
+            print(f"{ep.id:<4} | {kind:<10} | {ep.outcome:<8} | {ep.summary}")
 
 
 def cmd_show(args):
@@ -30,13 +33,20 @@ def cmd_show(args):
 
 
 def cmd_check(args):
-    matches = find_failures_like(args.task, args.plan, db_path=args.db, min_similarity=args.min_similarity)
+    matches = find_failures_like(
+        args.task, 
+        args.plan, 
+        db_path=args.db, 
+        min_similarity=args.min_similarity,
+        method=args.method
+    )
     if not matches:
         print("No similar failures found.")
     else:
         for m in matches:
             ep = m.episode
-            print(f"Match id={ep.id} similarity={m.similarity:.2f} outcome={ep.outcome} plan={ep.plan} summary={ep.summary} trace={ep.trace_path}")
+            kind = ep.failure_kind or "UNKNOWN"
+            print(f"Match id={ep.id} similarity={m.similarity:.2f} kind={kind} trace={ep.trace_path}")
 
 
 def build_parser():
@@ -56,6 +66,7 @@ def build_parser():
     p_check.add_argument("task", help="Task description")
     p_check.add_argument("plan", help="Plan description")
     p_check.add_argument("--min-similarity", type=float, default=0.8, help="Similarity threshold")
+    p_check.add_argument("--method", choices=["fuzzy", "cosine", "exact"], default="cosine", help="Similarity method")
     p_check.set_defaults(func=cmd_check)
 
     return p
@@ -64,7 +75,7 @@ def build_parser():
 def main(argv: Optional[list] = None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not hasattr(args, "func"):
+    if not hasattr(args, "func") or not args.cmd:
         parser.print_help()
         return
     args.func(args)

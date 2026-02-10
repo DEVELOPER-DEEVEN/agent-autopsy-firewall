@@ -3,6 +3,7 @@ import os
 import time
 import traceback
 import difflib
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Set
 
@@ -11,6 +12,38 @@ from .store import record_episode, find_failures_like, DEFAULT_DB_PATH
 
 class BlockedPlanError(Exception):
     """Raised when a plan is blocked due to prior failure."""
+
+
+def classify_failure(err_msg: str) -> str:
+    """Categorize the failure based on common error patterns."""
+    patterns = {
+        "TIMEOUT": [r"timeout", r"timed out", r"deadline"],
+        "PERMISSION": [r"permission denied", r"403", r"access denied", r"unauthorized"],
+        "VALIDATION": [r"validation error", r"invalid", r"pydantic", r"schema mismatch"],
+        "NETWORK": [r"connection failed", r"dns", r"502", r"503", r"504", r"socket error"],
+        "NOT_FOUND": [r"not found", r"404", r"no such file"],
+        "LOGIC": [r"assertionerror", r"logic error", r"valueerror", r"typeerror"]
+    }
+    
+    msg_lower = err_msg.lower()
+    for kind, regexes in patterns.items():
+        if any(re.search(r, msg_lower) for r in regexes):
+            return kind
+    return "UNKNOWN"
+
+
+def get_surgical_advice(kind: str) -> str:
+    """Provide actionable advice for a specific failure kind."""
+    advice = {
+        "TIMEOUT": "Consider increasing the timeout parameter or checking system load.",
+        "PERMISSION": "Verify file permissions, environment variables, or API tokens.",
+        "VALIDATION": "Check if the input schema has changed or if required fields are missing.",
+        "NETWORK": "Check connectivity or retry with an exponential backoff.",
+        "NOT_FOUND": "Verify file paths or endpoint URLs. Ensure dependent resources exist.",
+        "LOGIC": "Review the core algorithm. Add more logging to trace the state transition.",
+        "UNKNOWN": "Perform a deep autopsy using the trace logs and filesystem diffs."
+    }
+    return advice.get(kind, advice["UNKNOWN"])
 
 
 def snapshot_env(max_files: int = 50) -> dict[str, Any]:
@@ -84,7 +117,14 @@ class Recorder:
             method=self.similarity_method
         )
         if failures:
-            raise BlockedPlanError(f"Plan blocked; prior failures: {[(m.episode.id, round(m.similarity, 2)) for m in failures]}")
+            best_match = failures[0]
+            advice = get_surgical_advice(best_match.episode.failure_kind or "UNKNOWN")
+            error_msg = (
+                f"Plan blocked (Sim={best_match.similarity:.2f}). "
+                f"Past failure: {best_match.episode.failure_kind}. "
+                f"Advice: {advice}"
+            )
+            raise BlockedPlanError(error_msg)
 
         if capture_diffs:
             self.before_files = get_file_contents()
@@ -104,13 +144,15 @@ class Recorder:
             self._persist(trace_path, outcome="success", summary=summary)
         except Exception as e:
             duration = time.time() - start
+            err_msg = str(e)
+            failure_kind = classify_failure(err_msg)
             
             if capture_diffs:
                 self._capture_diffs()
                 
-            summary = f"Failed in {duration:.2f}s: {e}"
-            self.log_event("exception", {"err": repr(e), "trace": traceback.format_exc()})
-            self._persist(trace_path, outcome="failure", summary=summary)
+            summary = f"Failed in {duration:.2f}s: {err_msg}"
+            self.log_event("exception", {"kind": failure_kind, "err": err_msg, "trace": traceback.format_exc()})
+            self._persist(trace_path, outcome="failure", summary=summary, failure_kind=failure_kind)
             raise
 
     def _capture_diffs(self):
@@ -130,13 +172,22 @@ class Recorder:
         if diffs:
             self.log_event("fs_diff", {"changes": diffs})
 
-    def _persist(self, trace_path: str, outcome: str, summary: str):
+    def _persist(self, trace_path: str, outcome: str, summary: str, failure_kind: Optional[str] = None):
         with open(trace_path, "w") as f:
             json.dump({
                 "task": self.task,
                 "plan": self.plan,
                 "outcome": outcome,
+                "failure_kind": failure_kind,
                 "summary": summary,
                 "events": self.events,
             }, f, indent=2)
-        record_episode(task=self.task, plan=self.plan, outcome=outcome, summary=summary, trace_path=trace_path, db_path=self.db_path)
+        record_episode(
+            task=self.task, 
+            plan=self.plan, 
+            outcome=outcome, 
+            summary=summary, 
+            trace_path=trace_path, 
+            failure_kind=failure_kind,
+            db_path=self.db_path
+        )
