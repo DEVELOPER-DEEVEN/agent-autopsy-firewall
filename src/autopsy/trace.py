@@ -20,5 +20,13 @@ def render_trace(trace: Dict[str, Any]) -> str:
         ts_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
         kind = ev.get("kind")
         detail = ev.get("detail")
-        lines.append(f"[{ts_str}] {kind}: {detail}")
+        
+        if kind == "fs_diff":
+            lines.append(f"[{ts_str}] {kind}:")
+            for change in detail.get("changes", []):
+                lines.append(f"  --- {change['file']} ---")
+                lines.append(change['diff'])
+        else:
+            lines.append(f"[{ts_str}] {kind}: {detail}")
+            
     return "\n".join(lines)
